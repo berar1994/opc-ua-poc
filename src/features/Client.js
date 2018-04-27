@@ -1,7 +1,6 @@
 /* eslint-disable */
 
 import opcua from "node-opcua";
-import async from "async";
 
 const nodeId = "ns=1;s=Temperature";
 

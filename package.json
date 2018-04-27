@@ -31,7 +31,6 @@
         "webpack-cli": "^2.0.14"
     },
     "dependencies": {
-        "async": "^2.6.0",
         "lodash": "^4.17.10",
         "node-opcua": "^0.3.0"
     }
