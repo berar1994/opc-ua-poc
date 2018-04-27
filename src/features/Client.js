@@ -1,140 +1,88 @@
 /* eslint-disable */
 
-import opcua from 'node-opcua';
-import async from 'async';
+import opcua from "node-opcua";
+import async from "async";
+
+const nodeId = "ns=1;s=Temperature";
 
 class Client {
-  start(endpointUrl) {
-    var client = new opcua.OPCUAClient();
-
-    var the_session, the_subscription;
-
-    async.series([
-
-      // step 1 : connect to
-      function (callback) {
-        client.connect(endpointUrl, function (err) {
-          if (err) {
-            console.log(" cannot connect to endpoint :", endpointUrl);
-          } else {
-            console.log("connected !");
-          }
-          callback(err);
-        });
-      },
-
-      // step 2 : createSession
-      function (callback) {
-        client.createSession(function (err, session) {
-          if (!err) {
-            the_session = session;
-          }
-          callback(err);
-        });
-      },
-
-      // step 3 : browse
-      function (callback) {
-        the_session.browse("RootFolder", function (err, browseResult) {
-          if (!err) {
-            browseResult.references.forEach(function (reference) {
-              console.log(reference.browseName.toString());
-            });
-          }
-          callback(err);
-        });
-      },
-
-      // step 4 : read a variable with readVariableValue
-      function (callback) {
-        the_session.readVariableValue("ns=1;s=free_memory", function (err, dataValue) {
-          if (!err) {
-            console.log(" free mem % = ", dataValue.toString());
-          }
-          callback(err);
-        });
-
-
-      },
-
-      // step 4' : read a variable with read
-      function (callback) {
-        var maxAge = 0;
-        var nodeToRead = { nodeId: "ns=1;s=free_memory", attributeId: opcua.AttributeIds.Value };
-        the_session.read(nodeToRead, maxAge, function (err, dataValue) {
-          if (!err) {
-            console.log(" free mem % = ", dataValue.toString());
-          }
-          callback(err);
-        });
-
-
-      },
-
-      // step 5: install a subscription and install a monitored item for 10 seconds
-      function (callback) {
-
-        the_subscription = new opcua.ClientSubscription(the_session, {
-          requestedPublishingInterval: 1000,
-          requestedLifetimeCount: 10,
-          requestedMaxKeepAliveCount: 2,
-          maxNotificationsPerPublish: 10,
-          publishingEnabled: true,
-          priority: 10
-        });
-
-        the_subscription.on("started", function () {
-          console.log("subscription started for 2 seconds - subscriptionId=", the_subscription.subscriptionId);
-        }).on("keepalive", function () {
-          console.log("keepalive");
-        }).on("terminated", function () {
-        });
-
-        setTimeout(function () {
-          the_subscription.terminate(callback);
-        }, 10000);
-
-        // install monitored item
-        var monitoredItem = the_subscription.monitor({
-          nodeId: opcua.resolveNodeId("ns=1;s=free_memory"),
-          attributeId: opcua.AttributeIds.Value
-        },
-          {
-            samplingInterval: 100,
-            discardOldest: true,
-            queueSize: 10
-          },
-          opcua.read_service.TimestampsToReturn.Both
-        );
-        console.log("-------------------------------------");
-
-        monitoredItem.on("changed", function (dataValue) {
-          console.log(" % free mem = ", dataValue.value.value);
-        });
-      },
-
-      // close session
-      function (callback) {
-        the_session.close(function (err) {
-          if (err) {
-            console.log("session closed failed ?");
-          }
-          callback();
-        });
-      }
-
-    ],
-      function (err) {
-        if (err) {
-          console.log(" failure ", err);
-        } else {
-          console.log("done!");
+  async start(endpointUrl) {
+    try {
+      const client = new opcua.OPCUAClient({
+        certificateFile: "./certificates/client_selfsigned_cert_2048.pem",
+        privateKeyFile: "./certificates/client_key_2048.pem",
+        connectionStrategy: {
+          maxRetry: 2,
+          initialDelay: 2000,
+          maxDelay: 10 * 1000
         }
-        client.disconnect(function () { });
+      });
+      client.on("backoff", () => console.log("retrying connection"));
+
+      await client.connect(endpointUrl);
+
+      const session = await client.createSession();
+
+      const browseResult = await session.browse("RootFolder");
+
+      console.log(
+        browseResult.references.map(r => r.browseName.toString()).join("\n")
+      );
+
+      const dataValue = await session.read({
+        nodeId: nodeId,
+        attributeId: opcua.AttributeIds.Value
+      });
+      console.log(` temperature = ${dataValue.value.value.toString()}`);
+
+      // step 5: install a subscription and monitored item
+      const subscription = new opcua.ClientSubscription(session, {
+        requestedPublishingInterval: 1000,
+        requestedLifetimeCount: 10,
+        requestedMaxKeepAliveCount: 2,
+        maxNotificationsPerPublish: 10,
+        publishingEnabled: true,
+        priority: 10
       });
 
+      subscription
+        .on("started", () =>
+          console.log(
+            "subscription started - subscriptionId=",
+            subscription.subscriptionId
+          )
+        )
+        .on("keepalive", () => console.log("keepalive"))
+        .on("terminated", () => console.log("subscription terminated"));
+
+      const monitoredItem = subscription.monitor(
+        {
+          nodeId: "nodeId",
+          attributeId: opcua.AttributeIds.Value
+        },
+        {
+          samplingInterval: 1000,
+          discardOldest: true,
+          queueSize: 10
+        }
+      );
+
+      monitoredItem.on("changed", dataValue =>
+        console.log(` Temperature = ${dataValue.value.value.toString()}`)
+      );
+
+      await new Promise(resolve => setTimeout(resolve, 10000));
+
+      await subscription.terminate();
+
+      console.log(" closing session");
+      await session.close();
+
+      await client.disconnect();
+    } catch (err) {
+      console.log("Error !!!", err);
+    }
   }
 }
 
 export default Client;
-
